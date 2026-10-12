@@ -1,0 +1,31 @@
+name: smusic
+description: smusic - a glassy local + online music player for Android.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  just_audio: ^0.9.42
+  audio_service: ^0.18.16
+  audio_session: ^0.1.23
+  http: ^1.2.2
+  path_provider: ^2.1.5
+  shared_preferences: ^2.3.3
+  permission_handler: ^11.3.1
+  provider: ^6.1.2
+  youtube_explode_dart: ^2.3.5
+  cached_network_image: ^3.4.1
+  palette_generator: ^0.3.3+5
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
