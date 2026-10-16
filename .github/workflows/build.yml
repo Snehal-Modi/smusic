@@ -63,7 +63,8 @@ jobs:
 
       - name: Read version
         id: ver
-        run: echo "v=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//')" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "v=$(grep '^version:' pubspec.yaml | sed 's/version: //; s/+.*//')" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk smusic-v${{ steps.ver.outputs.v }}.apk
