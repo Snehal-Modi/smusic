@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../core/formatters.dart';
@@ -125,8 +126,13 @@ class _LocalHome extends StatelessWidget {
             EmptyNote(
               icon: Icons.lock_outline_rounded,
               title: 'smusic needs permission to read your music',
-              body: 'Allow access to audio files so your downloaded songs appear here.',
-              action: FilledButton(onPressed: () => lib.load(force: true), child: const Text('Allow access')),
+              body: lib.permanentlyDenied
+                  ? 'Permission was turned off. Open the app settings and allow "Music and audio".'
+                  : 'Allow access to audio files so your downloaded songs appear here.',
+              action: Wrap(spacing: 8, alignment: WrapAlignment.center, children: [
+                FilledButton(onPressed: () => lib.load(force: true), child: const Text('Allow access')),
+                if (lib.permanentlyDenied) TextButton(onPressed: openAppSettings, child: const Text('Open settings')),
+              ]),
             )
           else if (lib.songs.isEmpty && lib.loaded)
             const EmptyNote(

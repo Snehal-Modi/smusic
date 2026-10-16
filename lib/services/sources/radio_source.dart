@@ -7,12 +7,16 @@ import 'music_source.dart';
 
 /// Internet radio via radio-browser.info (community API, no key).
 class RadioSource extends MusicSource {
+  // The first entry round-robins over every live mirror; the rest are direct
+  // mirrors in case DNS for the round-robin name is blocked.
   static const _hosts = [
+    'https://all.api.radio-browser.info',
     'https://de1.api.radio-browser.info',
+    'https://de2.api.radio-browser.info',
     'https://at1.api.radio-browser.info',
     'https://nl1.api.radio-browser.info',
   ];
-  static const _headers = {'User-Agent': 'smusic/1.0'};
+  static const _headers = {'User-Agent': 'smusic/1.1 (personal music player)'};
 
   @override
   TrackSource get kind => TrackSource.radio;
@@ -23,7 +27,7 @@ class RadioSource extends MusicSource {
   Future<List<dynamic>> _get(String path) async {
     for (final h in _hosts) {
       try {
-        final r = await http.get(Uri.parse('$h$path'), headers: _headers).timeout(const Duration(seconds: 10));
+        final r = await http.get(Uri.parse('$h$path'), headers: _headers).timeout(const Duration(seconds: 8));
         if (r.statusCode == 200) {
           final j = jsonDecode(r.body);
           if (j is List) return j;
@@ -36,16 +40,17 @@ class RadioSource extends MusicSource {
   Track? _parse(dynamic e) {
     try {
       final m = Map<String, dynamic>.from(e as Map);
-      final url = (m['url_resolved'] ?? m['url'] ?? '').toString();
+      var url = (m['url_resolved'] ?? m['url'] ?? '').toString().trim();
       if (url.isEmpty) return null;
       final tags = (m['tags'] ?? '').toString().split(',').where((s) => s.trim().isNotEmpty).take(3).join(', ');
       final country = (m['country'] ?? '').toString();
       final fav = (m['favicon'] ?? '').toString();
+      final bitrate = (m['bitrate'] as num?)?.toInt() ?? 0;
       return Track(
         id: 'radio:${m['stationuuid']}',
         title: (m['name'] ?? 'Radio').toString().trim(),
         artist: [country, tags].where((s) => s.isNotEmpty).join(' / '),
-        album: 'Live radio',
+        album: bitrate > 0 ? 'Live radio  -  $bitrate kbps' : 'Live radio',
         source: TrackSource.radio,
         uri: url,
         artUrl: fav.startsWith('http') ? fav : null,
@@ -64,7 +69,7 @@ class RadioSource extends MusicSource {
   }
 
   @override
-  Future<ResolvedStream?> resolve(Track t, {required bool lowQuality}) async {
+  Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality}) async {
     if (t.uri == null) return null;
     return ResolvedStream(Uri.parse(t.uri!), cacheable: false);
   }

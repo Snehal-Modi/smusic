@@ -54,6 +54,12 @@ class TrackTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final handler = context.read<SmusicAudioHandler>();
     final accent = Theme.of(context).colorScheme.primary;
+    // Only rebuild this row when *its* offline state changes, not on every
+    // download progress tick.
+    final offline = !track.isLocal && !track.isLive && context.select<DownloadService, bool>((d) => d.isDownloaded(track));
+    final downloading = !track.isLocal && !track.isLive && context.select<DownloadService, bool>((d) => d.isDownloading(track));
+    final subtitleColor = Colors.white.withOpacity(0.6);
+
     return ValueListenableBuilder<Track?>(
       valueListenable: handler.current,
       builder: (c, cur, _) {
@@ -103,15 +109,22 @@ class TrackTile extends StatelessWidget {
                       Row(
                         children: [
                           if (showSource) ...[
-                            Icon(sourceIcon(track.source), size: 12, color: Colors.white.withOpacity(0.5)),
+                            Icon(sourceIcon(track.source), size: 12, color: subtitleColor),
                             const SizedBox(width: 4),
+                          ],
+                          if (offline) ...[
+                            Icon(Icons.download_done_rounded, size: 12, color: accent),
+                            const SizedBox(width: 4),
+                          ] else if (downloading) ...[
+                            SizedBox(width: 11, height: 11, child: CircularProgressIndicator(strokeWidth: 1.5, color: accent)),
+                            const SizedBox(width: 5),
                           ],
                           Expanded(
                             child: Text(
                               track.isLive ? track.artist : '${track.artist}  -  ${track.album}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12.5),
+                              style: TextStyle(color: subtitleColor, fontSize: 12.5),
                             ),
                           ),
                         ],
@@ -133,6 +146,7 @@ class TrackTile extends StatelessWidget {
                     Text(fmtDuration(track.duration), style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
                   IconButton(
                     icon: Icon(Icons.more_vert_rounded, color: Colors.white.withOpacity(0.7)),
+                    tooltip: 'More',
                     onPressed: () => showTrackMenu(context, track, contextTracks: queueContext, onRemove: onRemove),
                     visualDensity: VisualDensity.compact,
                   ),
@@ -154,6 +168,7 @@ Future<void> showTrackMenu(BuildContext context, Track t, {List<Track>? contextT
   final liked = col.isLiked(t);
   final canDownload = !t.isLocal && !t.isLive;
   final downloaded = dl.isDownloaded(t);
+  final downloading = dl.isDownloading(t);
   final album = t.source == TrackSource.local ? lib.albumOf(t) : null;
   final artist = t.source == TrackSource.local ? lib.artistOf(t) : null;
 
@@ -174,7 +189,7 @@ Future<void> showTrackMenu(BuildContext context, Track t, {List<Track>? contextT
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(ctx).textTheme.titleMedium),
-                    Text('${t.artist}  -  ${sourceLabel(t.source)}',
+                    Text('${t.artist}  -  ${sourceLabel(t.source)}${downloaded ? '  -  offline copy' : ''}',
                         maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(ctx).textTheme.bodySmall),
                   ],
                 ),
@@ -228,9 +243,18 @@ Future<void> showTrackMenu(BuildContext context, Track t, {List<Track>? contextT
         ),
         if (canDownload)
           SheetItem(
-            icon: downloaded ? Icons.download_done_rounded : Icons.download_rounded,
-            label: downloaded ? 'Downloaded' : 'Download for offline',
-            onTap: downloaded
+            icon: downloaded
+                ? Icons.download_done_rounded
+                : downloading
+                    ? Icons.downloading_rounded
+                    : Icons.download_rounded,
+            label: downloaded
+                ? 'Downloaded'
+                : downloading
+                    ? 'Downloading...'
+                    : 'Download for offline',
+            sub: downloaded ? 'Plays from the phone even without internet' : null,
+            onTap: downloaded || downloading
                 ? null
                 : () async {
                     Navigator.pop(ctx);

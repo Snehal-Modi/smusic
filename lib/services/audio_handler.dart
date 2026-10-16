@@ -10,6 +10,7 @@ import '../models/track.dart';
 import '../state/settings_state.dart';
 import 'local_library.dart';
 import 'sources/music_source.dart';
+import 'storage.dart';
 
 enum RepeatMode { off, all, one }
 
@@ -36,6 +37,7 @@ class BrowseDelegate {
 class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   final LocalLibrary library;
   final SettingsState settings;
+  final Store store;
 
   late final AudioPlayer player;
   late final AndroidEqualizer equalizer;
@@ -51,7 +53,12 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   final ValueNotifier<String?> lastError = ValueNotifier(null);
   final ValueNotifier<bool> resolving = ValueNotifier(false);
 
+  /// Called when a track actually starts (history).
   void Function(Track track)? onTrackStarted;
+
+  /// Returns the offline copy of an online track, if the user downloaded it.
+  Track? Function(Track track)? offlineCopy;
+
   BrowseDelegate? browse;
 
   List<Track> _queue = [];
@@ -61,8 +68,14 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   int _failures = 0;
   bool _completing = false;
   Timer? _sleepTimer;
+  Timer? _positionSaver;
 
-  SmusicAudioHandler({required this.library, required this.settings}) {
+  /// Position to resume from on the first play() after a restore.
+  Duration? _resumeAt;
+
+  static const _maxPersistedQueue = 300;
+
+  SmusicAudioHandler({required this.library, required this.settings, required this.store}) {
     equalizer = AndroidEqualizer();
     loudness = AndroidLoudnessEnhancer();
     final big = settings.bigBuffer;
@@ -101,6 +114,64 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
         mediaItem.add(mi.copyWith(duration: d));
       }
     });
+    player.playingStream.listen((playing) {
+      if (playing) {
+        _positionSaver ??= Timer.periodic(const Duration(seconds: 10), (_) => _savePosition());
+      } else {
+        _positionSaver?.cancel();
+        _positionSaver = null;
+        _savePosition();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- persistence
+
+  void _saveQueue() {
+    try {
+      final list = _queue.take(_maxPersistedQueue).map((t) => t.toJson()).toList();
+      store.setJsonList('queue', list);
+      store.setInt('queueIndex', index.value);
+      store.setBool('queueShuffle', shuffle.value);
+      store.setString('queueRepeat', repeat.value.name);
+    } catch (_) {}
+  }
+
+  void _savePosition() {
+    final t = current.value;
+    if (t == null || t.isLive) return;
+    try {
+      store.setInt('queuePos', player.position.inMilliseconds);
+    } catch (_) {}
+  }
+
+  /// Puts the last queue back without starting playback. The mini player shows
+  /// the song; pressing play resumes from the saved position.
+  void restore() {
+    try {
+      final raw = store.getJsonList('queue');
+      if (raw.isEmpty) return;
+      final tracks = <Track>[];
+      for (final e in raw) {
+        try {
+          tracks.add(Track.fromJson(Map<String, dynamic>.from(e as Map)));
+        } catch (_) {}
+      }
+      if (tracks.isEmpty) return;
+      _queue = tracks;
+      final i = (store.getInt('queueIndex') ?? 0).clamp(0, tracks.length - 1).toInt();
+      index.value = i;
+      shuffle.value = store.getBool('queueShuffle') ?? false;
+      final rep = store.getString('queueRepeat');
+      repeat.value = RepeatMode.values.firstWhere((r) => r.name == rep, orElse: () => RepeatMode.off);
+      final pos = store.getInt('queuePos') ?? 0;
+      final t = tracks[i];
+      _resumeAt = (pos > 2000 && !t.isLive) ? Duration(milliseconds: pos) : null;
+      current.value = t;
+      _syncQueue();
+      mediaItem.add(t.toMediaItem());
+      _broadcast(player.playbackEvent);
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------- state
@@ -143,6 +214,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   void _syncQueue() {
     queueTracks.value = List.unmodifiable(_queue);
     queue.add(_queue.map((t) => t.toMediaItem()).toList());
+    _saveQueue();
   }
 
   bool get hasQueue => _queue.isNotEmpty;
@@ -157,10 +229,17 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   // ---------------------------------------------------------------- loading
 
+  /// The track we will really play: the offline copy when one exists.
+  Track _playable(Track t) {
+    if (t.isLocal || t.isLive) return t;
+    final copy = offlineCopy?.call(t);
+    return copy ?? t;
+  }
+
   Future<ResolvedStream?> _resolve(Track t) async {
     final cached = _resolved[t.id];
     if (cached != null && cached.fresh) return cached;
-    final rs = await Sources.resolve(t, lowQuality: settings.lowQuality);
+    final rs = await Sources.resolve(t, quality: settings.quality);
     if (rs != null && t.needsResolve) _resolved[t.id] = rs;
     return rs;
   }
@@ -173,6 +252,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
     current.value = t;
     lastError.value = null;
     resolving.value = true;
+    store.setInt('queueIndex', i);
 
     Uri? artUri;
     if (t.source == TrackSource.local) {
@@ -185,11 +265,12 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
     _broadcast(player.playbackEvent);
 
     try {
-      final rs = await _resolve(t);
+      final target = _playable(t);
+      final rs = await _resolve(target);
       if (token != _loadToken) return;
       if (rs == null) throw Exception('no stream');
 
-      final useCache = settings.cacheStreams && rs.cacheable && !t.isLocal;
+      final useCache = settings.cacheStreams && rs.cacheable && !target.isLocal;
       AudioSource src = useCache
           ? LockCachingAudioSource(rs.uri, headers: rs.headers, tag: t.id)
           : AudioSource.uri(rs.uri, headers: rs.headers, tag: t.id);
@@ -212,7 +293,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
       if (token != _loadToken) return;
       resolving.value = false;
       _resolved.remove(t.id);
-      lastError.value = 'Could not play "${t.title}"';
+      lastError.value = t.isLocal ? 'Could not play "${t.title}". The file may have been moved.' : 'Could not stream "${t.title}". Check your connection.';
       _failures++;
       if (autoplay && _failures < 3 && _queue.length > 1) {
         await Future.delayed(const Duration(milliseconds: 700));
@@ -224,11 +305,13 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   void _prefetchNext() {
     final n = nextTrack;
-    if (n == null || !n.needsResolve) return;
-    final cached = _resolved[n.id];
+    if (n == null) return;
+    final target = _playable(n);
+    if (!target.needsResolve) return;
+    final cached = _resolved[target.id];
     if (cached != null && cached.fresh) return;
-    Sources.resolve(n, lowQuality: settings.lowQuality).then((rs) {
-      if (rs != null) _resolved[n.id] = rs;
+    Sources.resolve(target, quality: settings.quality).then((rs) {
+      if (rs != null) _resolved[target.id] = rs;
     }).catchError((_) {});
   }
 
@@ -272,6 +355,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   Future<void> playAll(List<Track> tracks, {int startIndex = 0, bool shuffleMode = false}) async {
     if (tracks.isEmpty) return;
+    _resumeAt = null;
     final start = tracks[startIndex.clamp(0, tracks.length - 1).toInt()];
     _unshuffled = null;
     if (shuffleMode) {
@@ -322,8 +406,9 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
       await playAll([t]);
       return;
     }
-    _queue.remove(t);
     final cur = current.value;
+    if (cur != null && cur.id == t.id) return;
+    _queue.remove(t);
     final at = cur == null ? 0 : _queue.indexOf(cur) + 1;
     _queue.insert(at, t);
     index.value = cur == null ? 0 : _queue.indexOf(cur);
@@ -368,6 +453,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> clearQueue() async {
     _queue = [];
     _unshuffled = null;
+    _resumeAt = null;
     await stop();
     current.value = null;
     index.value = 0;
@@ -412,6 +498,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
         repeat.value = RepeatMode.off;
         break;
     }
+    store.setString('queueRepeat', repeat.value.name);
     _broadcast(player.playbackEvent);
     _prefetchNext();
   }
@@ -463,7 +550,9 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() async {
     if (_queue.isEmpty) return;
     if (player.processingState == ProcessingState.idle) {
-      await _load(index.value);
+      final at = _resumeAt;
+      _resumeAt = null;
+      await _load(index.value, startAt: at);
       return;
     }
     if (player.processingState == ProcessingState.completed) {
@@ -477,6 +566,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> stop() async {
+    _savePosition();
     await player.stop();
     playbackState.add(playbackState.value.copyWith(
       processingState: AudioProcessingState.idle,
@@ -516,6 +606,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
         : repeatMode == AudioServiceRepeatMode.one
             ? RepeatMode.one
             : RepeatMode.all;
+    store.setString('queueRepeat', repeat.value.name);
     _broadcast(player.playbackEvent);
   }
 
@@ -533,6 +624,12 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> removeQueueItemAt(int i) => removeAt(i);
+
+  @override
+  Future<void> fastForward() => seekBy(const Duration(seconds: 10));
+
+  @override
+  Future<void> rewind() => seekBy(const Duration(seconds: -10));
 
   // ---------------------------------------------------------------- Android Auto browsing
 
@@ -647,6 +744,7 @@ class SmusicAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> onTaskRemoved() async {
+    _savePosition();
     if (!player.playing) await stop();
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import '../services/sources/music_source.dart';
 import '../services/storage.dart';
 
 /// User preferences. Everything persists immediately.
@@ -12,11 +13,18 @@ class SettingsState extends ChangeNotifier {
     accent = a == null ? kAccentPresets.first : Color(a);
     blur = _store.getDouble('blur') ?? 18;
     glassOpacity = _store.getDouble('glassOpacity') ?? 0.10;
-    lowQuality = _store.getBool('lowQuality') ?? false;
+    final q = _store.getString('quality');
+    if (q != null) {
+      quality = streamQualityFrom(q);
+    } else {
+      // Older builds stored a bool "lowQuality".
+      quality = (_store.getBool('lowQuality') ?? false) ? StreamQuality.low : StreamQuality.high;
+    }
     bigBuffer = _store.getBool('bigBuffer') ?? false;
     cacheStreams = _store.getBool('cacheStreams') ?? true;
     moodColors = _store.getBool('moodColors') ?? true;
     lyricsOpen = _store.getBool('lyricsOpen') ?? false;
+    resumeOnStart = _store.getBool('resumeOnStart') ?? true;
     searchHistory = _store.getJsonList('searchHistory').map((e) => e.toString()).toList();
   }
 
@@ -25,11 +33,12 @@ class SettingsState extends ChangeNotifier {
   late Color accent;
   late double blur;
   late double glassOpacity;
-  late bool lowQuality;
+  late StreamQuality quality;
   late bool bigBuffer;
   late bool cacheStreams;
   late bool moodColors;
   late bool lyricsOpen;
+  late bool resumeOnStart;
   late List<String> searchHistory;
 
   void setOnline(bool v) {
@@ -57,9 +66,9 @@ class SettingsState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setLowQuality(bool v) {
-    lowQuality = v;
-    _store.setBool('lowQuality', v);
+  void setQuality(StreamQuality q) {
+    quality = q;
+    _store.setString('quality', q.name);
     notifyListeners();
   }
 
@@ -84,6 +93,12 @@ class SettingsState extends ChangeNotifier {
   void setLyricsOpen(bool v) {
     lyricsOpen = v;
     _store.setBool('lyricsOpen', v);
+    notifyListeners();
+  }
+
+  void setResumeOnStart(bool v) {
+    resumeOnStart = v;
+    _store.setBool('resumeOnStart', v);
     notifyListeners();
   }
 

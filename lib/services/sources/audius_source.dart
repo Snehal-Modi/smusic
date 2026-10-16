@@ -8,6 +8,7 @@ import 'music_source.dart';
 /// Audius: free, legal, open API. No key, only an app name.
 class AudiusSource extends MusicSource {
   static const _app = 'smusic';
+  static const _timeout = Duration(seconds: 12);
   String? _host;
 
   @override
@@ -51,14 +52,20 @@ class AudiusSource extends MusicSource {
   @override
   Future<List<Track>> search(String query, {int limit = 20}) async {
     final host = await _hostUrl();
-    final r = await http.get(Uri.parse('$host/v1/tracks/search?query=${Uri.encodeQueryComponent(query)}&app_name=$_app'));
-    if (r.statusCode != 200) return const [];
+    final r = await http
+        .get(Uri.parse('$host/v1/tracks/search?query=${Uri.encodeQueryComponent(query)}&app_name=$_app'))
+        .timeout(_timeout);
+    if (r.statusCode != 200) {
+      _host = null; // try another discovery node next time
+      return const [];
+    }
     final list = (jsonDecode(r.body)['data'] as List?) ?? const [];
     return list.map(_parse).whereType<Track>().take(limit).toList();
   }
 
   @override
-  Future<ResolvedStream?> resolve(Track t, {required bool lowQuality}) async {
+  Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality}) async {
+    // Audius serves one quality per track; nothing to pick.
     final host = await _hostUrl();
     return ResolvedStream(Uri.parse('$host/v1/tracks/${t.extra}/stream?app_name=$_app'));
   }
@@ -67,7 +74,7 @@ class AudiusSource extends MusicSource {
   Future<List<Track>> trending() async {
     try {
       final host = await _hostUrl();
-      final r = await http.get(Uri.parse('$host/v1/tracks/trending?app_name=$_app')).timeout(const Duration(seconds: 12));
+      final r = await http.get(Uri.parse('$host/v1/tracks/trending?app_name=$_app')).timeout(_timeout);
       if (r.statusCode != 200) return const [];
       final list = (jsonDecode(r.body)['data'] as List?) ?? const [];
       return list.map(_parse).whereType<Track>().take(20).toList();

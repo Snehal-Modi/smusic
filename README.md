@@ -11,10 +11,13 @@ Not on any app store. Download the APK from the **Releases** page of this repo.
 - Local / Online switch at the top of every screen
 - Albums, artists, folders, playlists, liked songs, history, downloads
 - Queue with drag reorder, shuffle, repeat one / all, play next, 10-second skips
+- Resumes the last queue and position when you reopen the app
 - Synced lyrics that scroll with the song (LRCLIB)
 - Lock-screen and notification controls, headphone buttons, Android Auto browsing
-- Download online songs for offline play
-- Smart buffering, data-saver quality and stream cache for weak internet
+- Download online songs for offline play; a downloaded song is always played
+  from the phone, even when you tap it in search results
+- Three streaming qualities (Data saver 96 kbps / Balanced 160 / High 320),
+  large buffer and stream cache for weak internet
 - Sleep timer, playback speed, 5-band equalizer and loudness boost
 - Frosted-glass UI, accent colour of your choice, mood colours from album art
 - Phone, tablet and landscape layouts
@@ -24,24 +27,32 @@ Not on any app store. Download the APK from the **Releases** page of this repo.
 1. Open the Releases page of this repo on your phone.
 2. Download `smusic-vX.Y.Z.apk`.
 3. Open it, allow "install from unknown sources" when asked.
-4. First launch: allow access to music files so your songs appear.
+4. First launch: allow access to music files so your songs appear, and allow
+   notifications so the playback controls show on the lock screen.
 
 Requires Android 8.0 or newer.
 
 ## How the APK gets built
 
 Every push to `main` runs `.github/workflows/build.yml` on GitHub's servers:
-it installs Flutter, builds a signed release APK and attaches it to a GitHub
-Release named after the `version:` line in `pubspec.yaml`. Bump that version
-before pushing to publish a new release.
+it installs Flutter 3.27.1, runs the analyzer, builds a signed release APK and
+attaches it to a GitHub Release named after the `version:` line in
+`pubspec.yaml`. Bump that version before pushing to publish a new release.
 
 The first build creates `android/app/smusic.jks` and commits it back so every
 later APK has the same signature and installs as an update. Do not delete it.
+(The keystore and its password are in the repo, so anyone could sign an APK
+with this name. For a personal sideloaded app that is acceptable; make the repo
+private if it bothers you.)
+
+The full Android Gradle project is committed (`android/build.gradle`,
+`android/settings.gradle`, `android/gradle/wrapper`, ...). The first CI run
+failed because those files were missing and `flutter build apk` had nothing to
+build with.
 
 ## Build locally (optional)
 
 ```bash
-flutter create --platforms=android --org com.smusic --project-name smusic .
 flutter pub get
 flutter build apk --release
 ```

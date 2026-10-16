@@ -18,32 +18,53 @@ class LibraryState extends ChangeNotifier {
   bool loaded = false;
   bool denied = false;
 
+  /// True when the user chose "Don't ask again": only the system settings
+  /// page can fix it now.
+  bool permanentlyDenied = false;
+  bool _askedNotifications = false;
+
   Future<void> load({bool force = false}) async {
     if (loading) return;
     if (loaded && !force) return;
     loading = true;
     notifyListeners();
     try {
+      // Android 13+: READ_MEDIA_AUDIO. Older: READ_EXTERNAL_STORAGE
+      // (permission_handler maps `audio` to it automatically).
       var status = await Permission.audio.status;
       if (!status.isGranted) status = await Permission.audio.request();
       if (!status.isGranted) {
-        // Older Android falls back to storage permission.
         final st = await Permission.storage.request();
-        denied = !st.isGranted && !status.isGranted;
+        denied = !st.isGranted;
+        permanentlyDenied = status.isPermanentlyDenied || st.isPermanentlyDenied;
       } else {
         denied = false;
+        permanentlyDenied = false;
       }
       if (!denied) {
         songs = await library.querySongs();
         _group();
       }
       loaded = true;
+      _askNotifications();
     } catch (_) {
       // keep what we had
     } finally {
       loading = false;
       notifyListeners();
     }
+  }
+
+  /// Android 13+ needs this for the playback notification / lock-screen
+  /// controls. Asked once, after the music permission so the prompts don't
+  /// stack up on first launch.
+  Future<void> _askNotifications() async {
+    if (_askedNotifications) return;
+    _askedNotifications = true;
+    try {
+      final s = await Permission.notification.status;
+      if (s.isDenied) await Permission.notification.request();
+    } catch (_) {}
   }
 
   void _group() {

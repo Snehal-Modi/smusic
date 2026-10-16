@@ -33,10 +33,14 @@ class DownloadService extends ChangeNotifier {
   bool isDownloaded(Track t) => downloads.any((d) => d.id == _dlId(t) || d.id == t.id);
   bool isDownloading(Track t) => progress.containsKey(t.id);
 
-  /// The offline copy of an online track, if any.
+  /// The offline copy of an online track, if any (and its file still exists).
   Track? localCopy(Track t) {
     for (final d in downloads) {
-      if (d.id == _dlId(t)) return d;
+      if (d.id == _dlId(t)) {
+        final p = d.path;
+        if (p != null && File(p).existsSync()) return d;
+        return null;
+      }
     }
     return null;
   }
@@ -47,13 +51,15 @@ class DownloadService extends ChangeNotifier {
     errors.remove(t.id);
     notifyListeners();
     http.Client? client;
+    File? file;
     try {
-      final rs = await Sources.resolve(t, lowQuality: false);
+      // Always fetch the best quality for the permanent copy.
+      final rs = await Sources.resolve(t, quality: StreamQuality.high);
       if (rs == null) throw Exception('no stream');
       final d = await dir();
       final safe = t.id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
       final ext = t.source == TrackSource.audius ? 'mp3' : 'm4a';
-      final file = File('${d.path}/$safe.$ext');
+      file = File('${d.path}/$safe.$ext');
       client = http.Client();
       final req = http.Request('GET', rs.uri);
       if (rs.headers != null) req.headers.addAll(rs.headers!);
@@ -61,21 +67,23 @@ class DownloadService extends ChangeNotifier {
       if (resp.statusCode >= 400) throw Exception('HTTP ${resp.statusCode}');
       final total = resp.contentLength ?? 0;
       int got = 0;
+      int lastNotified = 0;
       final sink = file.openWrite();
-      await for (final chunk in resp.stream) {
-        sink.add(chunk);
-        got += chunk.length;
-        if (total > 0) {
-          progress[t.id] = got / total;
-          notifyListeners();
+      try {
+        await for (final chunk in resp.stream.timeout(const Duration(seconds: 60))) {
+          sink.add(chunk);
+          got += chunk.length;
+          if (total > 0 && got - lastNotified > 64 * 1024) {
+            lastNotified = got;
+            progress[t.id] = got / total;
+            notifyListeners();
+          }
         }
+      } finally {
+        await sink.flush();
+        await sink.close();
       }
-      await sink.flush();
-      await sink.close();
-      if (got < 20000) {
-        await file.delete();
-        throw Exception('empty file');
-      }
+      if (got < 20000) throw Exception('empty file');
       final copy = Track(
         id: _dlId(t),
         title: t.title,
@@ -94,6 +102,9 @@ class DownloadService extends ChangeNotifier {
       return true;
     } catch (e) {
       errors[t.id] = 'Download failed';
+      try {
+        if (file != null && await file.exists()) await file.delete();
+      } catch (_) {}
       return false;
     } finally {
       client?.close();
@@ -111,6 +122,20 @@ class DownloadService extends ChangeNotifier {
         if (await f.exists()) await f.delete();
       }
     } catch (_) {}
+  }
+
+  /// Drops entries whose file disappeared (cleared app storage, SD card removed).
+  Future<void> prune() async {
+    final before = downloads.length;
+    final keep = <Track>[];
+    for (final d in downloads) {
+      final p = d.path;
+      if (p != null && await File(p).exists()) keep.add(d);
+    }
+    if (keep.length != before) {
+      downloads = keep;
+      _save();
+    }
   }
 
   Future<int> totalBytes() async {

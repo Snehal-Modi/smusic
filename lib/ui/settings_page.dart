@@ -8,6 +8,7 @@ import '../core/glass.dart';
 import '../core/theme.dart';
 import '../services/download_service.dart';
 import '../services/local_library.dart';
+import '../services/sources/music_source.dart';
 import '../state/library_state.dart';
 import '../state/settings_state.dart';
 import 'equalizer_sheet.dart';
@@ -86,6 +87,11 @@ class SettingsPage extends StatelessWidget {
             title: Text('Blur strength  ${s.blur.toStringAsFixed(0)}'),
             subtitle: Slider(value: s.blur, min: 0, max: 40, onChanged: s.setBlur),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Text('Set to 0 on a slow phone: the frosted blur is the most expensive effect.',
+                style: Theme.of(context).textTheme.bodySmall),
+          ),
           ListTile(
             dense: true,
             title: Text('Glass opacity  ${(s.glassOpacity * 100).toStringAsFixed(0)}%'),
@@ -99,13 +105,30 @@ class SettingsPage extends StatelessWidget {
             onChanged: s.setMoodColors,
           ),
         ]),
-        _Card(title: 'Streaming', children: [
-          SwitchListTile(
-            dense: true,
-            title: const Text('Data saver'),
-            subtitle: const Text('Low quality streams (about 96 kbps). Good for slow internet.'),
-            value: s.lowQuality,
-            onChanged: s.setLowQuality,
+        _Card(title: 'Streaming quality', children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: StreamQuality.values
+                  .map((q) => GlassChip(
+                        label: qualityLabel(q),
+                        icon: q == StreamQuality.low
+                            ? Icons.data_saver_on_rounded
+                            : q == StreamQuality.medium
+                                ? Icons.speed_rounded
+                                : Icons.high_quality_rounded,
+                        selected: s.quality == q,
+                        onTap: () => s.setQuality(q),
+                      ))
+                  .toList(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text('${qualityHint(s.quality)} Applies to the next song. Downloads always use the best quality.',
+                style: Theme.of(context).textTheme.bodySmall),
           ),
           SwitchListTile(
             dense: true,
@@ -121,24 +144,16 @@ class SettingsPage extends StatelessWidget {
             value: s.cacheStreams,
             onChanged: s.setCacheStreams,
           ),
-          ListTile(
-            dense: true,
-            leading: const Icon(Icons.cleaning_services_rounded),
-            title: const Text('Clear stream cache'),
-            onTap: () async {
-              try {
-                final tmp = await getTemporaryDirectory();
-                final d = Directory('${tmp.path}/just_audio_cache');
-                if (await d.exists()) await d.delete(recursive: true);
-                context.read<LocalLibrary>().clearArtCache();
-                if (context.mounted) snack(context, 'Cache cleared');
-              } catch (_) {
-                if (context.mounted) snack(context, 'Nothing to clear');
-              }
-            },
-          ),
+          const _CacheTile(),
         ]),
-        _Card(title: 'Sound', children: [
+        _Card(title: 'Playback', children: [
+          SwitchListTile(
+            dense: true,
+            title: const Text('Resume where you left off'),
+            subtitle: const Text('Keeps the queue and position between app launches'),
+            value: s.resumeOnStart,
+            onChanged: s.setResumeOnStart,
+          ),
           ListTile(
             dense: true,
             leading: const Icon(Icons.equalizer_rounded),
@@ -158,11 +173,14 @@ class SettingsPage extends StatelessWidget {
             },
           ),
           Consumer<DownloadService>(
-            builder: (c, dl, _) => ListTile(
-              dense: true,
-              leading: const Icon(Icons.download_done_rounded),
-              title: Text('${dl.downloads.length} downloaded songs'),
-              subtitle: const Text('Stored privately inside the app'),
+            builder: (c, dl, _) => FutureBuilder<int>(
+              future: dl.totalBytes(),
+              builder: (c, snap) => ListTile(
+                dense: true,
+                leading: const Icon(Icons.download_done_rounded),
+                title: Text('${dl.downloads.length} downloaded songs'),
+                subtitle: Text(snap.hasData ? '${_mb(snap.data!)} stored privately inside the app' : 'Stored privately inside the app'),
+              ),
             ),
           ),
         ]),
@@ -170,8 +188,8 @@ class SettingsPage extends StatelessWidget {
           const ListTile(
             dense: true,
             leading: Icon(Icons.music_note_rounded),
-            title: Text('smusic 1.0.0'),
-            subtitle: Text('Local + online music player. Open source, distributed through GitHub only.'),
+            title: Text('smusic 1.1.0'),
+            subtitle: Text('Local + online music player. Personal build, distributed through GitHub only.'),
           ),
           ListTile(
             dense: true,
@@ -182,6 +200,70 @@ class SettingsPage extends StatelessWidget {
           ),
         ]),
       ],
+    );
+  }
+}
+
+String _mb(int bytes) => bytes < 1024 * 1024 ? '${(bytes / 1024).round()} KB' : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+/// Shows the stream cache size and clears it.
+class _CacheTile extends StatefulWidget {
+  const _CacheTile();
+
+  @override
+  State<_CacheTile> createState() => _CacheTileState();
+}
+
+class _CacheTileState extends State<_CacheTile> {
+  Future<int>? _size;
+
+  @override
+  void initState() {
+    super.initState();
+    _size = _measure();
+  }
+
+  static Future<Directory> _cacheDir() async {
+    final tmp = await getTemporaryDirectory();
+    return Directory('${tmp.path}/just_audio_cache');
+  }
+
+  static Future<int> _measure() async {
+    try {
+      final d = await _cacheDir();
+      if (!await d.exists()) return 0;
+      int n = 0;
+      await for (final f in d.list(recursive: true, followLinks: false)) {
+        if (f is File) n += await f.length();
+      }
+      return n;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<int>(
+      future: _size,
+      builder: (c, s) => ListTile(
+        dense: true,
+        leading: const Icon(Icons.cleaning_services_rounded),
+        title: const Text('Clear stream cache'),
+        subtitle: Text(s.hasData ? '${_mb(s.data!)} used' : 'Measuring...'),
+        onTap: () async {
+          try {
+            final d = await _cacheDir();
+            if (await d.exists()) await d.delete(recursive: true);
+            if (!context.mounted) return;
+            context.read<LocalLibrary>().clearArtCache();
+            snack(context, 'Cache cleared');
+          } catch (_) {
+            if (context.mounted) snack(context, 'Nothing to clear');
+          }
+          if (mounted) setState(() => _size = _measure());
+        },
+      ),
     );
   }
 }

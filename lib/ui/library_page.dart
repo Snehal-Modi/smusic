@@ -97,7 +97,9 @@ class _LibraryPageState extends State<LibraryPage> with SingleTickerProviderStat
   Widget _denied(LibraryState lib) => EmptyNote(
         icon: Icons.lock_outline_rounded,
         title: 'Permission needed',
-        body: 'Allow smusic to read audio files on this phone.',
+        body: lib.permanentlyDenied
+            ? 'Permission was turned off. Open settings and allow "Music and audio".'
+            : 'Allow smusic to read audio files on this phone.',
         action: Wrap(spacing: 8, children: [
           FilledButton(onPressed: () => lib.load(force: true), child: const Text('Allow')),
           TextButton(onPressed: openAppSettings, child: const Text('Open settings')),

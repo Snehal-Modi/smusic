@@ -34,13 +34,13 @@ Future<void> main() async {
   final downloads = DownloadService(store);
 
   final handler = await AudioService.init(
-    builder: () => SmusicAudioHandler(library: library, settings: settings),
+    builder: () => SmusicAudioHandler(library: library, settings: settings, store: store),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.smusic.smusic.playback',
       androidNotificationChannelName: 'smusic playback',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
-      androidNotificationIcon: 'mipmap/ic_launcher',
+      androidNotificationIcon: 'drawable/ic_stat_smusic',
       androidShowNotificationBadge: false,
       fastForwardInterval: Duration(seconds: 10),
       rewindInterval: Duration(seconds: 10),
@@ -49,6 +49,7 @@ Future<void> main() async {
   );
 
   handler.onTrackStarted = collections.pushRecent;
+  handler.offlineCopy = downloads.localCopy;
   handler.browse = BrowseDelegate(
     songs: () => libraryState.songs,
     albums: () => libraryState.albums,
@@ -57,6 +58,8 @@ Future<void> main() async {
     downloads: () => downloads.downloads,
     recent: () => collections.recent,
   );
+  if (settings.resumeOnStart) handler.restore();
+  downloads.prune();
 
   runApp(SmusicApp(
     settings: settings,
@@ -105,6 +108,14 @@ class SmusicApp extends StatelessWidget {
           title: 'smusic',
           debugShowCheckedModeBanner: false,
           theme: buildTheme(s.accent),
+          // Huge system font sizes break fixed-height rows; keep the scale sane.
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: mq.textScaler.clamp(minScaleFactor: 0.85, maxScaleFactor: 1.3)),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: const AppShell(),
         ),
       ),

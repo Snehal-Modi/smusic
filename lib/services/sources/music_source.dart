@@ -4,6 +4,38 @@ import 'radio_source.dart';
 import 'saavn_source.dart';
 import 'youtube_source.dart';
 
+/// How much bandwidth a stream may use. Picked in Settings.
+enum StreamQuality { low, medium, high }
+
+StreamQuality streamQualityFrom(String? s) {
+  for (final v in StreamQuality.values) {
+    if (v.name == s) return v;
+  }
+  return StreamQuality.high;
+}
+
+String qualityLabel(StreamQuality q) {
+  switch (q) {
+    case StreamQuality.low:
+      return 'Data saver';
+    case StreamQuality.medium:
+      return 'Balanced';
+    case StreamQuality.high:
+      return 'High';
+  }
+}
+
+String qualityHint(StreamQuality q) {
+  switch (q) {
+    case StreamQuality.low:
+      return 'About 96 kbps. Best for 2G / weak signal.';
+    case StreamQuality.medium:
+      return 'About 160 kbps. Good on 3G / busy Wi-Fi.';
+    case StreamQuality.high:
+      return 'Up to 320 kbps. Needs a steady connection.';
+  }
+}
+
 class ResolvedStream {
   final Uri uri;
   final Map<String, String>? headers;
@@ -18,7 +50,7 @@ abstract class MusicSource {
   TrackSource get kind;
   String get name;
   Future<List<Track>> search(String query, {int limit = 20});
-  Future<ResolvedStream?> resolve(Track t, {required bool lowQuality});
+  Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality});
   Future<List<Track>> trending() async => const [];
 }
 
@@ -40,14 +72,14 @@ class Sources {
     return null;
   }
 
-  static Future<ResolvedStream?> resolve(Track t, {required bool lowQuality}) async {
+  static Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality}) async {
     if (t.isLocal) {
       return t.uri == null ? null : ResolvedStream(Uri.parse(t.uri!), cacheable: false);
     }
     final s = forTrack(t);
     if (s == null) return null;
     try {
-      return await s.resolve(t, lowQuality: lowQuality).timeout(const Duration(seconds: 25));
+      return await s.resolve(t, quality: quality).timeout(const Duration(seconds: 25));
     } catch (_) {
       return null;
     }

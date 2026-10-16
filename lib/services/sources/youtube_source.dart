@@ -20,7 +20,8 @@ class YoutubeSource extends MusicSource {
     for (final v in res) {
       if (out.length >= limit) break;
       final d = v.duration;
-      if (d != null && d > const Duration(minutes: 25)) continue; // skip mixes / long videos
+      if (d == null || d < const Duration(seconds: 30)) continue; // live / shorts
+      if (d > const Duration(minutes: 25)) continue; // mixes / long videos
       out.add(Track(
         id: 'yt:${v.id.value}',
         title: v.title,
@@ -28,7 +29,7 @@ class YoutubeSource extends MusicSource {
         album: 'YouTube',
         source: TrackSource.youtube,
         duration: d,
-        artUrl: v.thumbnails.highResUrl,
+        artUrl: v.thumbnails.mediumResUrl,
         extra: v.id.value,
       ));
     }
@@ -36,9 +37,12 @@ class YoutubeSource extends MusicSource {
   }
 
   @override
-  Future<ResolvedStream?> resolve(Track t, {required bool lowQuality}) async {
+  Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality}) async {
     final id = t.extra ?? t.id.replaceFirst('yt:', '');
-    final manifest = await _yt.videos.streamsClient.getManifest(id);
+    final manifest = await _yt.videos.streamsClient.getManifest(
+      id,
+      ytClients: [YoutubeApiClient.androidVr, YoutubeApiClient.ios, YoutubeApiClient.android],
+    );
     final audios = manifest.audioOnly.toList();
     if (audios.isEmpty) {
       final muxed = manifest.muxed.toList();
@@ -50,7 +54,18 @@ class YoutubeSource extends MusicSource {
     final mp4 = audios.where((a) => a.container.name.toLowerCase().contains('mp4')).toList();
     final pool = mp4.isNotEmpty ? mp4 : audios;
     pool.sort((a, b) => a.bitrate.bitsPerSecond.compareTo(b.bitrate.bitsPerSecond));
-    final pick = lowQuality ? pool.first : pool.last;
+    final AudioOnlyStreamInfo pick;
+    switch (quality) {
+      case StreamQuality.low:
+        pick = pool.first;
+        break;
+      case StreamQuality.medium:
+        pick = pool[pool.length ~/ 2];
+        break;
+      case StreamQuality.high:
+        pick = pool.last;
+        break;
+    }
     return ResolvedStream(pick.url);
   }
 

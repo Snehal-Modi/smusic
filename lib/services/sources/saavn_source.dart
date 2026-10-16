@@ -6,13 +6,15 @@ import '../../core/formatters.dart';
 import '../../models/track.dart';
 import 'music_source.dart';
 
-/// JioSaavn unofficial web API. Best for Indian music, 320 kbps. Patch here when it breaks.
+/// JioSaavn unofficial web API. Best for Indian music, up to 320 kbps.
+/// Patch here when it breaks.
 class SaavnSource extends MusicSource {
   static const _base = 'https://www.jiosaavn.com/api.php';
   static const _headers = {
     'Accept': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
   };
+  static const _timeout = Duration(seconds: 15);
 
   @override
   TrackSource get kind => TrackSource.saavn;
@@ -36,10 +38,9 @@ class SaavnSource extends MusicSource {
 
   @override
   Future<List<Track>> search(String query, {int limit = 20}) async {
-    final r = await http.get(
-      _u({'__call': 'search.getResults', 'q': query, 'p': '1', 'n': '$limit'}),
-      headers: _headers,
-    );
+    final r = await http
+        .get(_u({'__call': 'search.getResults', 'q': query, 'p': '1', 'n': '$limit'}), headers: _headers)
+        .timeout(_timeout);
     if (r.statusCode != 200) return const [];
     final j = _json(r.body);
     final list = (j is Map ? j['results'] : null) as List? ?? const [];
@@ -76,33 +77,47 @@ class SaavnSource extends MusicSource {
     }
   }
 
+  static String _bitrate(StreamQuality q) {
+    switch (q) {
+      case StreamQuality.low:
+        return '96';
+      case StreamQuality.medium:
+        return '160';
+      case StreamQuality.high:
+        return '320';
+    }
+  }
+
   @override
-  Future<ResolvedStream?> resolve(Track t, {required bool lowQuality}) async {
+  Future<ResolvedStream?> resolve(Track t, {required StreamQuality quality}) async {
     final enc = t.extra;
     if (enc == null) return null;
-    final r = await http.get(
-      _u({'__call': 'song.generateAuthToken', 'url': enc, 'bitrate': lowQuality ? '96' : '320'}),
-      headers: _headers,
-    );
+    final r = await http
+        .get(_u({'__call': 'song.generateAuthToken', 'url': enc, 'bitrate': _bitrate(quality)}), headers: _headers)
+        .timeout(_timeout);
     if (r.statusCode != 200) return null;
     final j = _json(r.body);
     var url = (j is Map ? j['auth_url'] : null)?.toString();
     if (url == null || url.isEmpty) return null;
     url = url.replaceAll('ac.cf.saavncdn.com', 'aac.saavncdn.com');
+    if (url.startsWith('http://')) url = url.replaceFirst('http://', 'https://');
     return ResolvedStream(Uri.parse(url));
   }
 
   @override
   Future<List<Track>> trending() async {
     try {
-      final r = await http.get(
-        _u({'__call': 'content.getTrending', 'entity_type': 'song', 'entity_language': 'hindi'}),
-        headers: _headers,
-      );
+      final r = await http
+          .get(_u({'__call': 'content.getTrending', 'entity_type': 'song', 'entity_language': 'hindi'}), headers: _headers)
+          .timeout(_timeout);
       if (r.statusCode != 200) return const [];
       final j = _json(r.body);
       final list = j is List ? j : (j is Map ? (j['results'] ?? j['data']) as List? : null) ?? const [];
-      return list.where((e) => e is Map && (e['type'] == 'song' || e['more_info'] != null)).map(_parse).whereType<Track>().toList();
+      return list
+          .where((e) => e is Map && (e['type'] == 'song' || e['more_info'] != null))
+          .map(_parse)
+          .whereType<Track>()
+          .toList();
     } catch (_) {
       return const [];
     }

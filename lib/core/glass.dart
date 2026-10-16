@@ -15,6 +15,10 @@ class GlassConfig extends InheritedWidget {
 }
 
 /// A frosted, translucent panel: the building block of the whole UI.
+///
+/// [frosted] controls the real backdrop blur. It is expensive, so small
+/// repeated elements (chips, round buttons, list rows) turn it off and rely on
+/// the translucent fill alone, which looks the same at that size.
 class GlassPanel extends StatelessWidget {
   final Widget child;
   final double radius;
@@ -25,9 +29,11 @@ class GlassPanel extends StatelessWidget {
   final Color? tint;
   final bool border;
   final bool highlight;
+  final bool frosted;
   final double? width;
   final double? height;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   const GlassPanel({
     super.key,
@@ -40,9 +46,11 @@ class GlassPanel extends StatelessWidget {
     this.tint,
     this.border = true,
     this.highlight = true,
+    this.frosted = true,
     this.width,
     this.height,
     this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -52,6 +60,9 @@ class GlassPanel extends StatelessWidget {
     final o = opacity ?? cfg?.opacity ?? 0.10;
     final base = tint ?? Colors.white;
     final r = BorderRadius.circular(radius);
+    final useBlur = frosted && b > 0.5;
+    // Without the blur a little more fill keeps the panel readable.
+    final fill = useBlur ? o : o + 0.04;
 
     Widget inner = Container(
       width: width,
@@ -63,8 +74,8 @@ class GlassPanel extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            base.withOpacity(o + (highlight ? 0.06 : 0)),
-            base.withOpacity(o * 0.55),
+            base.withOpacity((fill + (highlight ? 0.06 : 0)).clamp(0.0, 1.0)),
+            base.withOpacity((fill * 0.55).clamp(0.0, 1.0)),
           ],
         ),
         border: border ? Border.all(color: Colors.white.withOpacity(0.14), width: 1) : null,
@@ -72,11 +83,12 @@ class GlassPanel extends StatelessWidget {
       child: child,
     );
 
-    if (onTap != null) {
+    if (onTap != null || onLongPress != null) {
       inner = Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
+          onLongPress: onLongPress,
           borderRadius: r,
           splashColor: Colors.white.withOpacity(0.08),
           highlightColor: Colors.white.withOpacity(0.05),
@@ -87,10 +99,12 @@ class GlassPanel extends StatelessWidget {
 
     final clipped = ClipRRect(
       borderRadius: r,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: b, sigmaY: b),
-        child: inner,
-      ),
+      child: useBlur
+          ? BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: b, sigmaY: b),
+              child: inner,
+            )
+          : inner,
     );
 
     return margin != null ? Padding(padding: margin!, child: clipped) : clipped;
@@ -127,6 +141,7 @@ class GlassIconButton extends StatelessWidget {
       radius: size / 2,
       width: size,
       height: size,
+      frosted: false,
       tint: filled ? scheme.primary : background,
       opacity: filled ? 0.9 : null,
       onTap: onPressed,
@@ -136,7 +151,8 @@ class GlassIconButton extends StatelessWidget {
             color: color ?? (filled ? _onAccent(scheme.primary) : Colors.white.withOpacity(onPressed == null ? 0.35 : 0.92))),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
+    final sem = Semantics(button: true, label: tooltip, child: btn);
+    return tooltip == null ? sem : Tooltip(message: tooltip!, child: sem);
   }
 }
 
@@ -157,6 +173,7 @@ class GlassChip extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return GlassPanel(
       radius: 999,
+      frosted: false,
       tint: selected ? scheme.primary : null,
       opacity: selected ? 0.85 : null,
       onTap: onTap,
@@ -190,47 +207,49 @@ class GlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = mood ?? accent;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 900),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.lerp(const Color(0xFF0B0B12), c, 0.42)!,
-                const Color(0xFF0B0B12),
-                Color.lerp(const Color(0xFF0B0B12), accent, 0.18)!,
-              ],
-              stops: const [0, 0.55, 1],
-            ),
-          ),
-        ),
-        if (art != null)
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 700),
-            child: Opacity(
-              key: ValueKey(art),
-              opacity: 0.35,
-              child: ImageFiltered(
-                imageFilter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
-                child: Image(image: art!, fit: BoxFit.cover),
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 900),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color.lerp(const Color(0xFF0B0B12), c, 0.42)!,
+                  const Color(0xFF0B0B12),
+                  Color.lerp(const Color(0xFF0B0B12), accent, 0.18)!,
+                ],
+                stops: const [0, 0.55, 1],
               ),
             ),
           ),
-        Positioned(
-          top: -120,
-          right: -80,
-          child: _Blob(color: c.withOpacity(0.35), size: 320),
-        ),
-        Positioned(
-          bottom: -140,
-          left: -100,
-          child: _Blob(color: accent.withOpacity(0.25), size: 360),
-        ),
-      ],
+          if (art != null)
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 700),
+              child: Opacity(
+                key: ValueKey(art),
+                opacity: 0.35,
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+                  child: Image(image: art!, fit: BoxFit.cover),
+                ),
+              ),
+            ),
+          Positioned(
+            top: -120,
+            right: -80,
+            child: _Blob(color: c.withOpacity(0.35), size: 320),
+          ),
+          Positioned(
+            bottom: -140,
+            left: -100,
+            child: _Blob(color: accent.withOpacity(0.25), size: 360),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -242,12 +261,13 @@ class _Blob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ImageFiltered(
-      imageFilter: ImageFilter.blur(sigmaX: 70, sigmaY: 70),
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+    // A radial gradient looks like a blurred circle and costs nothing to draw.
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(colors: [color, color.withOpacity(0)], stops: const [0.0, 1.0]),
       ),
     );
   }

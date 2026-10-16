@@ -10,8 +10,10 @@ import '../models/track.dart';
 class LocalLibrary {
   static const MethodChannel _ch = MethodChannel('smusic/media');
 
-  final Map<int, Uint8List?> _artCache = {};
-  final Map<int, Future<Uint8List?>> _inflight = {};
+  // Keyed by album (or song) id and the requested size, so a 50 px list
+  // thumbnail never gets reused for the full-screen Now Playing art.
+  final Map<String, Uint8List?> _artCache = {};
+  final Map<String, Future<Uint8List?>> _inflight = {};
   Directory? _artDir;
 
   Future<List<Track>> querySongs() async {
@@ -26,13 +28,14 @@ class LocalLibrary {
     return out;
   }
 
-  /// Album art bytes for a local track, cached per album.
+  /// Album art bytes for a local track, cached per album and size.
   Future<Uint8List?> art(Track t, {int size = 320}) {
-    final key = t.albumId ?? t.localId ?? -1;
+    final bucket = size <= 320 ? 320 : 640;
+    final key = '${t.albumId ?? t.localId ?? -1}@$bucket';
     if (_artCache.containsKey(key)) return Future.value(_artCache[key]);
     final pending = _inflight[key];
     if (pending != null) return pending;
-    final f = _fetch(t, size).then((b) {
+    final f = _fetch(t, bucket).then((b) {
       _artCache[key] = b;
       _inflight.remove(key);
       return b;
@@ -56,7 +59,7 @@ class LocalLibrary {
 
   /// Writes the art to a cache file so the notification / lock screen can show it.
   Future<Uri?> artFileUri(Track t) async {
-    final bytes = await art(t, size: 512);
+    final bytes = await art(t, size: 640);
     if (bytes == null) return null;
     try {
       _artDir ??= Directory('${(await getTemporaryDirectory()).path}/art');
@@ -69,5 +72,8 @@ class LocalLibrary {
     }
   }
 
-  void clearArtCache() => _artCache.clear();
+  void clearArtCache() {
+    _artCache.clear();
+    _inflight.clear();
+  }
 }
