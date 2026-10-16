@@ -99,9 +99,35 @@ class SaavnSource extends MusicSource {
     final j = _json(r.body);
     var url = (j is Map ? j['auth_url'] : null)?.toString();
     if (url == null || url.isEmpty) return null;
-    url = url.replaceAll('ac.cf.saavncdn.com', 'aac.saavncdn.com');
     if (url.startsWith('http://')) url = url.replaceFirst('http://', 'https://');
-    return ResolvedStream(Uri.parse(url));
+
+    // The signed link comes back on web.saavncdn.com, which answers 403 to
+    // clients without browser headers. aac.saavncdn.com serves the same file
+    // openly, so try it first and fall back to the original host.
+    final alt = url.replaceAll(RegExp(r'//(web|ac\.cf)\.saavncdn\.com'), '//aac.saavncdn.com');
+    for (final candidate in {alt, url}) {
+      if (await _playable(candidate)) {
+        return ResolvedStream(Uri.parse(candidate), headers: _streamHeaders);
+      }
+    }
+    return null;
+  }
+
+  static const _streamHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',
+    'Referer': 'https://www.jiosaavn.com/',
+  };
+
+  /// Asks the CDN for the first byte so a dead link fails here, not in the player.
+  Future<bool> _playable(String url) async {
+    try {
+      final r = await http
+          .get(Uri.parse(url), headers: {..._streamHeaders, 'Range': 'bytes=0-0'})
+          .timeout(const Duration(seconds: 8));
+      return r.statusCode == 200 || r.statusCode == 206;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
