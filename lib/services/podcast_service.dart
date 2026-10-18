@@ -56,7 +56,8 @@ class PodcastService {
           .timeout(_timeout);
       if (r.statusCode != 200) return const [];
       final j = jsonDecode(r.body);
-      final entries = (j is Map ? (j['feed'] as Map?)?['entry'] : null) as List? ?? const [];
+      final feed = j is Map ? j['feed'] : null;
+      final entries = feed is Map ? feed['entry'] as List? ?? const [] : const [];
       final ids = <String>[];
       for (final e in entries) {
         final id = ((e as Map)['id'] as Map?)?['attributes']?['im:id'];
